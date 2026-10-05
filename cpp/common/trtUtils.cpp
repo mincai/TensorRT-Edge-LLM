@@ -479,6 +479,18 @@ std::unique_ptr<nvinfer1::ICudaEngine> deserializeCudaEngineFromFile(
         LOG_ERROR("Failed to deserialize TensorRT engine from file: %s", enginePath.string().c_str());
         throw std::runtime_error("Failed to deserialize TensorRT engine from file: " + enginePath.string());
     }
+    // Engines built with kWEIGHT_STREAMING (see EDGELLM_WEIGHT_STREAMING) otherwise let createExecutionContext pick
+    // a CPU/GPU split automatically; keep every weight resident so the budget never silently trades latency.
+    int64_t const streamableBytes = engine->getStreamableWeightsSize();
+    if (streamableBytes > 0)
+    {
+        if (!engine->setWeightStreamingBudgetV2(streamableBytes))
+        {
+            throw std::runtime_error("Failed to make streamable weights fully resident for " + enginePath.string());
+        }
+        LOG_INFO("Weight-streaming engine %s: %.2f GiB of weights pinned resident on the GPU",
+            enginePath.string().c_str(), static_cast<double>(streamableBytes) / (1024.0 * 1024.0 * 1024.0));
+    }
     return engine;
 }
 
