@@ -1271,14 +1271,18 @@ def write_runtime_artifacts(model: "CausalLM",
     # (which is a no-op for Alpamayo) and before write_chat_template.
     if root_cfg.get("model_type") == "alpamayo_r1":
         _build_alpamayo_tokenizer(root_cfg, out_dir)
-    elif root_cfg.get("model_type") == "alpamayo2_super":
-        _build_alpamayo2_tokenizer(root_cfg, model_dir, out_dir)
 
     for fname in RUNTIME_TOKENIZER_FILENAMES:
         src = os.path.join(model_dir, fname)
         if os.path.exists(src):
             shutil.copy2(src, os.path.join(out_dir, fname))
             logger.info("Copied %s", fname)
+
+    # Alpamayo 2 ships the base tokenizer in model_dir; extend it with the
+    # trajectory tokens *after* the copy above so the extension is not
+    # overwritten by the checkpoint files.
+    if root_cfg.get("model_type") == "alpamayo2_super":
+        _build_alpamayo2_tokenizer(root_cfg, model_dir, out_dir)
 
     # If tokenizer.json is missing but vocab.json+merges.txt exist (GPT-2
     # format, used by Qwen3-ASR/TTS), generate tokenizer.json using the
