@@ -403,6 +403,14 @@ private:
     bool setupLLMOptimizationProfiles(
         nvinfer1::IBuilder& builder, nvinfer1::IBuilderConfig& config, nvinfer1::INetworkDefinition const& network);
 
+    //! Merge the context and generation profiles into one spanning both shape ranges (EDGELLM_SINGLE_PROFILE=1).
+    //! Min/max are the per-dimension union; opt comes from the context profile, or the generation profile when
+    //! decodeOpt is set.
+    //! @return true if every dynamic input was merged and the merged profile is valid
+    bool mergeOptimizationProfiles(nvinfer1::IOptimizationProfile const& contextProfile,
+        nvinfer1::IOptimizationProfile const& generationProfile, bool decodeOpt,
+        nvinfer1::INetworkDefinition const& network, nvinfer1::IOptimizationProfile& merged);
+
     //! Set up common optimization profiles shared by all LLM types.
     //! Configures context lengths, rotary embeddings, and KV cache profiles.
     //! @param contextProfile Optimization profile for context processing

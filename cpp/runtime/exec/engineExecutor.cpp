@@ -23,6 +23,7 @@
 #include "common/logger.h"
 #include "common/trtUtils.h"
 #include "runtime/exec/registryBuilder.h"
+#include <algorithm>
 #include <stdexcept>
 #include <string_view>
 
@@ -275,6 +276,8 @@ bool TrtEngineExecutor::prepare(
         return false;
     }
 
+    // Single-profile engines (EDGELLM_SINGLE_PROFILE=1 builds) serve prefill and decode from profile 0.
+    profileIndex = std::min(profileIndex, mEngine->getNbOptimizationProfiles() - 1);
     if (mCurrentProfileIndex != profileIndex && !mContext->setOptimizationProfileAsync(profileIndex, stream))
     {
         LOG_ERROR("failed to set optimization profile %d", profileIndex);
@@ -438,7 +441,7 @@ nvinfer1::DataType TrtEngineExecutor::getBindingDataType(char const* name) const
 nvinfer1::Dims TrtEngineExecutor::getProfileShape(
     char const* name, int32_t profileIndex, nvinfer1::OptProfileSelector selector) const
 {
-    return mEngine->getProfileShape(name, profileIndex, selector);
+    return mEngine->getProfileShape(name, std::min(profileIndex, mEngine->getNbOptimizationProfiles() - 1), selector);
 }
 
 void TrtEngineExecutor::setProfiler(nvinfer1::IProfiler* profiler) noexcept
