@@ -288,6 +288,9 @@ are listed under [Speculative Draft Checkpoints](#speculative-draft-checkpoints)
 
 - **Alpamayo** (`alpamayo_r1`): text and image/video to reasoning and a
   trajectory. [nvidia/Alpamayo-R1-10B](https://huggingface.co/nvidia/Alpamayo-R1-10B)
+- **Alpamayo 2 Super** (`alpamayo2_super`): text, camera frames and a trajectory
+  history to reasoning and a trajectory; FP16, FP8 or NVFP4 language model.
+  [nvidia/Alpamayo2-Super](https://huggingface.co/nvidia/Alpamayo2-Super)
 - **Cosmos3-Edge** (`cosmos3_edge`): text and image/video to reasoning.
   [nvidia/Cosmos3-Edge](https://huggingface.co/nvidia/Cosmos3-Edge)
 - **pi0.5** (model-specific exporter/runtime): camera observations and an
