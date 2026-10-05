@@ -505,6 +505,7 @@ def _load_action_weights(model: AlpamayoAction, weights: dict,
                          dtype: torch.dtype) -> None:
     """Assign weights from the flat checkpoint dict to the model."""
     loaded = 0
+    loaded_params = set()
     _ACTION_PREFIXES = ("expert.", "action_in_proj.", "action_out_proj.")
     for ckpt_key, tensor in weights.items():
         if not ckpt_key.startswith(_ACTION_PREFIXES):
@@ -535,6 +536,7 @@ def _load_action_weights(model: AlpamayoAction, weights: dict,
                 t = tensor.to(dtype) if tensor.is_floating_point() else tensor
                 param.data.copy_(t)
                 loaded += 1
+                loaded_params.add(model_key)
             elif isinstance(param, torch.Tensor):
                 # buffer (e.g. freqs)
                 param.copy_(tensor)
@@ -544,6 +546,13 @@ def _load_action_weights(model: AlpamayoAction, weights: dict,
             continue
 
     logger.info("Loaded %d action expert tensors", loaded)
+    missing = sorted(name for name, _ in model.named_parameters()
+                     if name not in loaded_params)
+    if missing:
+        raise ValueError(
+            f"{len(missing)} action expert parameters were not found in the "
+            f"checkpoint (e.g. {missing[:3]}); refusing to export partially "
+            "random weights.")
 
 
 def build_alpamayo_1_action(cfg: ActionConfig, weights: dict,

@@ -27,7 +27,7 @@ namespace action_utils
 {
 
 std::vector<tokenizer::Rank> trajectoryToTokenIds(std::vector<PastTrajectoryPoint> const& trajectoryHistory,
-    tokenizer::Rank numTrajTokens, tokenizer::Rank trajTokenStart)
+    tokenizer::Rank numTrajTokens, tokenizer::Rank trajTokenStart, bool includeOriginPoint)
 {
     std::vector<tokenizer::Rank> tokenIds;
     std::tuple<float, float, float> point0, point;
@@ -59,6 +59,10 @@ std::vector<tokenizer::Rank> trajectoryToTokenIds(std::vector<PastTrajectoryPoin
         {
             point0 = item;
             point = item;
+            if (!includeOriginPoint)
+            {
+                continue;
+            }
         }
         else
         {

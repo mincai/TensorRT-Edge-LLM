@@ -542,9 +542,15 @@ def export_action_onnx(
                        output_names, dynamic_shapes)
 
 
-def write_action_config(config: "ActionConfig", max_kv_cache_capacity: int,
-                        out_dir: str) -> None:
-    """Write the action config.json for the C++ runtime."""
+def write_action_config(config: "ActionConfig",
+                        max_kv_cache_capacity: int,
+                        out_dir: str,
+                        extras: "dict | None" = None) -> None:
+    """Write the action config.json for the C++ runtime.
+
+    ``extras`` carries model-variant fields (e.g. ``action_model_type``) that
+    are merged into the top level of the config.
+    """
     import json
     os.makedirs(out_dir, exist_ok=True)
     rope_scaling = {
@@ -570,6 +576,7 @@ def write_action_config(config: "ActionConfig", max_kv_cache_capacity: int,
             "max_kv_cache_capacity": max_kv_cache_capacity,
         },
     }
+    cfg_out.update(extras or {})
     path = os.path.join(out_dir, "config.json")
     with open(path, "w") as f:
         json.dump(cfg_out, f, indent=2)

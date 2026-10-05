@@ -125,6 +125,7 @@ _VLM_MODEL_TYPES = frozenset([
     "gemma4",
     "gemma4_unified",
     "alpamayo_r1",
+    "alpamayo2_super",
     "muse_glimmer",
     *_NEMOTRON_OMNI_MODEL_TYPES,
 ])
@@ -165,6 +166,7 @@ _CODE2WAV_MODEL_TYPES = frozenset([
 
 _ACTION_MODEL_TYPES = frozenset([
     "alpamayo_r1",
+    "alpamayo2_super",
 ])
 # Which LLM-family components each model ships.  Default (unlisted model types)
 # is ``{"thinker"}``.  Add a new Talker/CP-bearing model by listing it here; no
@@ -229,7 +231,11 @@ def _has_llm_component(model_type: str, component: str) -> bool:
 
 
 def _is_alpamayo(model_type: str) -> bool:
-    return model_type == "alpamayo_r1"
+    return model_type in _ACTION_MODEL_TYPES
+
+
+def _is_alpamayo2(model_type: str) -> bool:
+    return model_type == "alpamayo2_super"
 
 
 def _is_diffusion_gemma(model_type: str, config: dict) -> bool:
@@ -1024,7 +1030,7 @@ def _export_llm(model_dir: str,
     os.makedirs(llm_out_dir, exist_ok=True)
 
     key_remap = None
-    if model_type == "alpamayo_r1":
+    if _is_alpamayo(model_type):
         key_remap = _alpamayo_llm_key_remap
     elif model_type == "cosmos3_edge":
         key_remap = _cosmos3_edge_llm_key_remap
@@ -2283,7 +2289,7 @@ def _export_alpamayo_visual(model_dir: str, visual_out_dir: str, weights: dict,
                    vis_model_type,
                    dtype,
                    model_config=model_config)
-    _save_alpamayo_visual_processor(config, visual_out_dir)
+    _save_alpamayo_visual_processor(config, visual_out_dir, model_dir)
 
 
 def _export_audio(model_dir: str,
@@ -3778,6 +3784,61 @@ def _extract_code_predictor_weights(model_dir: str, out_dir: str,
 # ---------------------------------------------------------------------------
 
 
+def _alpamayo2_action_weights(weights: dict) -> dict:
+    """Map Alpamayo 2 action weights onto the Alpamayo 1 action module names.
+
+    Alpamayo 2 nests the whole action stack under ``expert.``
+    (``expert.expert.layers.*``, ``expert.action_in_proj.*``,
+    ``expert.action_out_proj.*``); Alpamayo 1 stores them at the root.
+    """
+    return {
+        k[len("expert."):]: v
+        for k, v in weights.items() if k.startswith("expert.")
+    }
+
+
+def _build_alpamayo2_action_config(root_cfg: dict, weights: dict):
+    """Build an ActionConfig from the nested Alpamayo 2 ``expert_config``."""
+    from .. import config as config_module
+
+    expert_cfg = root_cfg["expert_config"]
+    update_cfg = expert_cfg["expert_update_cfg"]
+    llm_cfg = expert_cfg["llm_config"]
+    head_dim = update_cfg["head_dim"]
+    rope_scaling = llm_cfg.get("rope_scaling") or {}
+    num_kv_heads = weights["expert.layers.0.self_attn.k_proj.weight"].shape[
+        0] // head_dim
+    if num_kv_heads != llm_cfg["num_key_value_heads"]:
+        raise ValueError(
+            f"Alpamayo 2 expert k_proj implies {num_kv_heads} KV heads, "
+            f"config says {llm_cfg['num_key_value_heads']}")
+    in_proj_cfg = expert_cfg.get("action_in_proj_cfg", {})
+    traj_ids = root_cfg["traj_ids"]
+
+    return config_module.ActionConfig(
+        rope_theta=float(llm_cfg["rope_theta"]),
+        mrope_section=list(rope_scaling["mrope_section"]),
+        mrope_interleaved=bool(rope_scaling.get("mrope_interleaved", True)),
+        num_hidden_layers=llm_cfg["num_hidden_layers"],
+        num_attention_heads=update_cfg["num_attention_heads"],
+        num_key_value_heads=num_kv_heads,
+        head_dim=head_dim,
+        attention_scaling=config_module._get_attention_scaling(
+            update_cfg, head_dim, 1.0 / (float(head_dim)**0.5)),
+        hidden_size=update_cfg["hidden_size"],
+        intermediate_size=update_cfg["intermediate_size"],
+        rms_norm_eps=float(llm_cfg.get("rms_norm_eps", 1e-6)),
+        # History trajectory bins; <i0> .. <i{history_vocab_size - 1}>.
+        num_traj_tokens=root_cfg["history_vocab_size"],
+        traj_token_start=traj_ids["history_id0"],
+        n_diffusion_tokens=expert_cfg["action_space_cfg"]["n_waypoints"],
+        in_proj_hidden_size=in_proj_cfg.get("hidden_size", 512),
+        in_proj_num_enc_layers=in_proj_cfg.get("num_enc_layers", 2),
+        in_proj_max_freq=in_proj_cfg.get("max_freq", 100.0),
+        in_proj_num_fourier_feats=in_proj_cfg.get("num_fourier_feats", 20),
+    )
+
+
 def _build_action_config(root_cfg: dict, weights: dict):
     """Build an ActionConfig from the Alpamayo root config and weight dict."""
     from .. import config as config_module
@@ -3840,7 +3901,12 @@ def _export_action(model_dir: str, action_out_dir: str, weights: dict,
     output_path = os.path.join(action_out_dir, "model.onnx")
 
     logger.info("[Action] Building ActionConfig from checkpoint ...")
-    action_cfg = _build_action_config(config, weights)
+    model_type = config.get("model_type")
+    if _is_alpamayo2(model_type):
+        weights = _alpamayo2_action_weights(weights)
+        action_cfg = _build_alpamayo2_action_config(config, weights)
+    else:
+        action_cfg = _build_action_config(config, weights)
     logger.info("[Action] Expert: %d layers, %d heads, hidden=%d",
                 action_cfg.num_hidden_layers, action_cfg.num_attention_heads,
                 action_cfg.hidden_size)
@@ -3856,11 +3922,43 @@ def _export_action(model_dir: str, action_out_dir: str, weights: dict,
             max_kv_cache_capacity=max_kv_cache_capacity,
             dtype=dtype,
         )
-        write_action_config(action_cfg, max_kv_cache_capacity, action_out_dir)
+        write_action_config(action_cfg, max_kv_cache_capacity, action_out_dir,
+                            _alpamayo_action_extras(config))
     except (OSError, ValueError, RuntimeError) as exc:
         logger.exception("[Action] ONNX export failed")
         raise SystemExit(1) from exc
     logger.info("[Action] Done: %s", output_path)
+
+
+def _alpamayo_action_extras(config: dict) -> dict:
+    """Runtime fields the C++ action runner needs beyond ``ActionConfig``."""
+    if not _is_alpamayo2(config.get("model_type")):
+        return {"action_model_type": "alpamayo1"}
+    action_space = config["expert_config"]["action_space_cfg"]
+    return {
+        "action_model_type":
+        "alpamayo2",
+        # History ends at the ego origin: T waypoints -> T-1 deltas
+        # (DeltaTrajectoryTokenizer(pad_origin_at_beginning=False)).
+        "history_includes_origin_point":
+        False,
+        "tokens_per_history_traj":
+        config["tokens_per_history_traj"],
+        # Token-id range masked while the VLM writes its reasoning, plus the
+        # text EOS ids; generation may only end on <|traj_future_start|>.
+        "masked_token_start":
+        min(config["traj_ids"]["history_id0"],
+            config["traj_ids"]["future_id0"]),
+        "masked_token_count":
+        config["traj_vocab_size"],
+        "traj_future_start_id":
+        config["traj_ids"]["future_start"],
+        "action_space": {
+            k: action_space[k]
+            for k in ("accel_mean", "accel_std", "curvature_mean",
+                      "curvature_std", "dt", "n_waypoints")
+        },
+    }
 
 
 def _prepare_alpamayo_visual_params(
@@ -3874,7 +3972,10 @@ def _prepare_alpamayo_visual_params(
     """
     vlm_name = config.get("vlm_name_or_path", "Qwen/Qwen3-VL-8B-Instruct")
     vis_config = config
-    if vlm_name:
+    if isinstance(config.get("vlm_config"), dict):
+        # Alpamayo 2 embeds the full VLM config; vlm_name_or_path is empty.
+        vis_config = dict(config["vlm_config"])
+    elif vlm_name:
         try:
             from transformers import AutoConfig
             vis_config = AutoConfig.from_pretrained(
@@ -3902,22 +4003,29 @@ def _prepare_alpamayo_visual_params(
     return vis_weights, vis_config, "qwen3_vl"
 
 
-def _save_alpamayo_visual_processor(config: dict, visual_out_dir: str) -> None:
+def _save_alpamayo_visual_processor(config: dict, visual_out_dir: str,
+                                    model_dir: str) -> None:
     """Save the Qwen3-VL processor with Alpamayo-specific pixel settings."""
     import shutil
 
     vlm_name = config.get("vlm_name_or_path", "Qwen/Qwen3-VL-8B-Instruct")
+    min_pixels, max_pixels = 128 * 28 * 28, 2048 * 32 * 32
+    size = {"longest_edge": 16777216, "shortest_edge": 65536}
+    if _is_alpamayo2(config.get("model_type")):
+        # Alpamayo 2 ships its processor and fixes the per-image pixel budget
+        # in config.json (Alpamayo2SuperConfig.min_pixels / max_pixels). Keep
+        # ``size`` in agreement so neither spelling can widen the budget.
+        vlm_name = model_dir
+        min_pixels, max_pixels = config["min_pixels"], config["max_pixels"]
+        size = {"longest_edge": max_pixels, "shortest_edge": min_pixels}
     try:
         from transformers import AutoProcessor
         proc = AutoProcessor.from_pretrained(
             vlm_name,
             trust_remote_code=True,
-            min_pixels=128 * 28 * 28,
-            max_pixels=2048 * 32 * 32,
-            size={
-                "longest_edge": 16777216,
-                "shortest_edge": 65536
-            },
+            min_pixels=min_pixels,
+            max_pixels=max_pixels,
+            size=size,
         )
         proc.save_pretrained(visual_out_dir)
         # Transformers v5 saves processor_config.json but the C++

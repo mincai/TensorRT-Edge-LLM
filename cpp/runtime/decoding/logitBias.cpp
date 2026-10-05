@@ -98,7 +98,8 @@ void allocateLogitBias(LogitBias& logitBias, int32_t maxBatchSize)
 {
     check::check(maxBatchSize > 0, "Maximum batch size for logit bias must be positive");
 
-    size_t const maxEntriesHost = static_cast<size_t>(maxBatchSize) * limits::security::kMaxLogitBiasTokens;
+    size_t const maxEntriesHost = static_cast<size_t>(maxBatchSize)
+        * (limits::security::kMaxLogitBiasTokens + limits::security::kMaxInternalLogitBiasTokens);
     int64_t const maxEntries = static_cast<int64_t>(maxEntriesHost);
     logitBias.tokenIds = Tensor({maxEntries}, DeviceType::kGPU, nvinfer1::DataType::kINT32, "LogitBias::tokenIds");
     logitBias.values = Tensor({maxEntries}, DeviceType::kGPU, nvinfer1::DataType::kFLOAT, "LogitBias::values");

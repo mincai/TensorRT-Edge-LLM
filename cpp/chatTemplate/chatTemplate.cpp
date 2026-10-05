@@ -200,14 +200,21 @@ std::vector<rt::Message> normalizeDeveloperMessages(std::vector<rt::Message> mes
     return result;
 }
 
-std::string trajectoryPlaceholder(std::optional<size_t> const& trajectoryPointCount)
+//! \param includeOriginPoint Alpamayo 1 tokenizes all N points (3N pads); Alpamayo 2 tokenizes the N-1 deltas of a
+//!        history ending at the ego origin (3(N-1) pads). Must agree with action_utils::trajectoryToTokenIds.
+std::string trajectoryPlaceholder(std::optional<size_t> const& trajectoryPointCount, bool includeOriginPoint = true)
 {
     if (!trajectoryPointCount)
     {
         throw std::runtime_error("trajectory content requires pastTrajectory data");
     }
+    if (!includeOriginPoint && *trajectoryPointCount < 2)
+    {
+        throw std::runtime_error("delta-only trajectory content requires at least two pastTrajectory points");
+    }
+    size_t const numEncodedPoints = includeOriginPoint ? *trajectoryPointCount : *trajectoryPointCount - 1;
     std::string result = rt::kTrajHistoryStartStr;
-    for (size_t index = 0; index < 3 * *trajectoryPointCount; ++index)
+    for (size_t index = 0; index < 3 * numEncodedPoints; ++index)
     {
         result += rt::kTrajHistoryPadStr;
     }
@@ -491,8 +498,9 @@ std::string renderManual(std::string const& family, std::vector<rt::Message> con
     std::optional<size_t> const& trajectoryPointCount, bool addGenerationPrompt, bool systemPromptOnly)
 {
     std::string result;
-    if (family == "alpamayo")
+    if (family == "alpamayo" || family == "alpamayo2")
     {
+        bool const includeOriginPoint = family == "alpamayo";
         for (auto const& message : messages)
         {
             result += "<|im_start|>" + message.role + "\n";
@@ -505,9 +513,9 @@ std::string renderManual(std::string const& family, std::vector<rt::Message> con
                 else if (item.type == "video")
                     result += "<|vision_start|><|video_pad|><|vision_end|>";
                 else if (item.type == "trajectory")
-                    result += trajectoryPlaceholder(trajectoryPointCount);
+                    result += trajectoryPlaceholder(trajectoryPointCount, includeOriginPoint);
                 else
-                    throw std::runtime_error("alpamayo does not accept " + item.type + " message content");
+                    throw std::runtime_error(family + " does not accept " + item.type + " message content");
             }
             result += "<|im_end|>\n";
         }
@@ -630,7 +638,8 @@ public:
             if (hasManual)
             {
                 mManualFamily = trimString(readTextFile(manualPath));
-                static std::unordered_set<std::string> const supported{"alpamayo", "qwen3_asr", "qwen3_tts"};
+                static std::unordered_set<std::string> const supported{
+                    "alpamayo", "alpamayo2", "qwen3_asr", "qwen3_tts"};
                 if (supported.count(mManualFamily) == 0)
                 {
                     throw std::runtime_error("unknown native chat renderer: " + mManualFamily);
