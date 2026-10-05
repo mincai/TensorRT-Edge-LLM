@@ -256,6 +256,10 @@ def load_checkpoint_config_dicts(
     # the text sub-config so downstream sees a standard Qwen3-VL text config.
     if root.get("model_type") == "alpamayo_r1":
         llm = _promote_alpamayo_llm_config(root)
+    elif root.get("model_type") == "alpamayo2_super":
+        # Alpamayo 2 embeds the full Qwen3-VL config under ``vlm_config``;
+        # the generic promotion only looks for top-level sub-configs.
+        llm = dict(root["vlm_config"]["text_config"])
     else:
         llm = _promote_llm_subconfig(config, root)
 
@@ -942,6 +946,79 @@ def build_runtime_llm_config_dict(
     return out
 
 
+def _build_alpamayo2_tokenizer(config: Dict[str, Any], model_dir: str,
+                               out_dir: str) -> None:
+    """Build and save the Alpamayo 2 tokenizer with added trajectory tokens.
+
+    Mirrors ``alpamayo2_super.config.build_alpamayo2_super_tokenizer``: the
+    checkpoint tokenizer plus ``<i0>`` .. ``<i{traj_vocab_size - 1}>`` (history
+    bins first, then future bins) and the special tokens, in that order. The
+    resulting ids must land exactly on ``config["traj_ids"]``.
+    """
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(model_dir)
+    tokenizer.add_tokens([f"<i{v}>" for v in range(config["traj_vocab_size"])])
+    tokenizer.add_tokens(
+        ["<|" + k + "|>" for k in _ALPAMAYO_SPECIAL_TOKEN_KEYS],
+        special_tokens=True)
+
+    traj_ids = config["traj_ids"]
+    expected = {
+        "<i0>": traj_ids["history_id0"],
+        f"<i{config['history_vocab_size']}>": traj_ids["future_id0"],
+        "<|traj_history_start|>": traj_ids["history_start"],
+        "<|traj_history_end|>": traj_ids["history_end"],
+        "<|traj_history|>": traj_ids["history_pad"],
+        "<|traj_future_start|>": traj_ids["future_start"],
+        "<|traj_future_end|>": traj_ids["future_end"],
+        "<|traj_future|>": traj_ids["future_pad"],
+    }
+    actual = {t: tokenizer.convert_tokens_to_ids(t) for t in expected}
+    if actual != expected:
+        raise ValueError(
+            f"Alpamayo 2 tokenizer ids {actual} do not match config traj_ids "
+            f"{expected}")
+
+    os.makedirs(out_dir, exist_ok=True)
+    tokenizer.save_pretrained(out_dir)
+    logger.info("Saved Alpamayo 2 tokenizer (%d tokens) to %s", len(tokenizer),
+                out_dir)
+
+
+_ALPAMAYO_SPECIAL_TOKEN_KEYS = [
+    "prompt_start",
+    "prompt_end",
+    "image_start",
+    "image_pre_tkn",
+    "image_end",
+    "traj_history_start",
+    "traj_history_pre_tkn",
+    "traj_history_end",
+    "cot_start",
+    "cot_end",
+    "meta_action_start",
+    "meta_action_end",
+    "traj_future_start",
+    "traj_future_pre_tkn",
+    "traj_future_end",
+    "traj_history",
+    "traj_future",
+    "image_pad",
+    "vectorized_wm",
+    "vectorized_wm_start",
+    "vectorized_wm_end",
+    "vectorized_wm_pre_tkn",
+    "route_start",
+    "route_pad",
+    "route_end",
+    "question_start",
+    "question_end",
+    "answer_start",
+    "answer_end",
+]
+
+
 def _build_alpamayo_tokenizer(config: Dict[str, Any], out_dir: str) -> None:
     """Build and save the Alpamayo-R1 tokenizer with added trajectory tokens.
 
@@ -1194,6 +1271,8 @@ def write_runtime_artifacts(model: "CausalLM",
     # (which is a no-op for Alpamayo) and before write_chat_template.
     if root_cfg.get("model_type") == "alpamayo_r1":
         _build_alpamayo_tokenizer(root_cfg, out_dir)
+    elif root_cfg.get("model_type") == "alpamayo2_super":
+        _build_alpamayo2_tokenizer(root_cfg, model_dir, out_dir)
 
     for fname in RUNTIME_TOKENIZER_FILENAMES:
         src = os.path.join(model_dir, fname)

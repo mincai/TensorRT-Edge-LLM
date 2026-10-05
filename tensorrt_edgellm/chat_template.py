@@ -37,6 +37,7 @@ _LEGACY_RUNTIME_JSON_ARTIFACT = "processed_chat_template.json"
 # depend on model-specific runtime data, so they use explicit native renderers.
 _MANUAL_BY_MODEL_TYPE = {
     "alpamayo_r1": "alpamayo",
+    "alpamayo2_super": "alpamayo2",
     "qwen3_asr": "qwen3_asr",
     "qwen3_asr_thinker": "qwen3_asr",
     "qwen3_tts": "qwen3_tts",

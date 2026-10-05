@@ -925,8 +925,10 @@ LLMRankRuntime::GenerationSession::GenerationSession(LLMRankRuntime& runtime, De
           && std::any_of(request.requests.begin(), request.requests.end(),
               [](auto const& req) { return req.pastTrajectory.has_value(); }))
 {
-    // Alpamayo 1 marks the start of the trajectory block with a dedicated token.
-    if (mRuntime.mActionRunner && mRuntime.mActionRunner->getModelType() == action::ActionModelType::ALPAMAYO1)
+    // Alpamayo 1 and 2 mark the start of the trajectory block with a dedicated token.
+    if (mRuntime.mActionRunner
+        && (mRuntime.mActionRunner->getModelType() == action::ActionModelType::ALPAMAYO1
+            || mRuntime.mActionRunner->getModelType() == action::ActionModelType::ALPAMAYO2))
     {
         mTrajFutureStartId = static_cast<int32_t>(mRuntime.mTokenizer->getTokenId("<|traj_future_start|>"));
     }
@@ -1928,6 +1930,7 @@ std::unique_ptr<LLMRankRuntime::SteppedGeneration> LLMRankRuntime::beginGenerati
     std::vector<int32_t> const reasoningEndIds = reasoningEndMarkers(*mTokenizer);
 
     prepareLogitBias(mLogitBias, request, context);
+    applyActionReasoningMask(request, context);
 
     // Compile each slot's grammar before any GPU work, so a failure marks just that slot.
     context.hasGuidedDecoding = false;
@@ -2378,6 +2381,61 @@ bool LLMRankRuntime::finishGeneration(SteppedGeneration& generation, LLMGenerati
     }
 
     return true;
+}
+
+void LLMRankRuntime::applyActionReasoningMask(LLMGenerationRequest const& request, DecodingInferenceContext& context)
+{
+    if (!mActionRunner || mActionRunner->getModelType() != action::ActionModelType::ALPAMAYO2)
+    {
+        return;
+    }
+    auto const [maskStart, maskCount] = mActionRunner->getMaskedTokenRange();
+    if (maskStart < 0 || maskCount <= 0)
+    {
+        return;
+    }
+
+    std::vector<int32_t> maskedIds;
+    maskedIds.reserve(static_cast<size_t>(maskCount) + 4U);
+    for (int32_t tokenId = maskStart; tokenId < maskStart + maskCount; ++tokenId)
+    {
+        maskedIds.push_back(tokenId);
+    }
+    for (auto const eosId : mTokenizer->getEosIds())
+    {
+        maskedIds.push_back(static_cast<int32_t>(eosId));
+    }
+    int32_t const trajFutureStartId = static_cast<int32_t>(mTokenizer->getTokenId("<|traj_future_start|>"));
+
+    auto const& fullToReduced = mLogitBias.fullToReducedVocabMap;
+    for (int32_t i = 0; i < context.activeBatchSize; ++i)
+    {
+        if (!request.requests[static_cast<size_t>(i)].pastTrajectory.has_value())
+        {
+            continue;
+        }
+        auto& destination = context.logitBiasPerSlot[static_cast<size_t>(i)];
+        for (int32_t const tokenId : maskedIds)
+        {
+            if (tokenId == trajFutureStartId)
+            {
+                continue;
+            }
+            int32_t outputTokenId = tokenId;
+            if (!fullToReduced.empty())
+            {
+                if (tokenId < 0 || static_cast<size_t>(tokenId) >= fullToReduced.size()
+                    || fullToReduced[static_cast<size_t>(tokenId)] < 0)
+                {
+                    continue; // Not in the reduced output vocabulary: can never be sampled anyway.
+                }
+                outputTokenId = fullToReduced[static_cast<size_t>(tokenId)];
+            }
+            destination[outputTokenId] = limits::security::kMinLogitBias;
+        }
+        context.hasLogitBias = true;
+    }
+    context.logitBiasGpuDirty = context.hasLogitBias;
 }
 
 bool LLMRankRuntime::validateRequestConfig(LLMGenerationRequest const& request)

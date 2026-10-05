@@ -81,8 +81,8 @@ bool Alpamayo1ActionRunner::preprocess(LLMGenerationRequest const& request,
         tokenizer::Rank const padId = itPad->second;
         tokenizer::Rank const endId = itEnd->second;
 
-        std::vector<tokenizer::Rank> const actualTokens
-            = action_utils::trajectoryToTokenIds(*req.pastTrajectory, mConfig.numTrajTokens, mConfig.trajTokenStart);
+        std::vector<tokenizer::Rank> const actualTokens = action_utils::trajectoryToTokenIds(
+            *req.pastTrajectory, mConfig.numTrajTokens, mConfig.trajTokenStart, mConfig.historyIncludesOriginPoint);
 
         size_t scanIdx = 0;
         while (scanIdx < tokenIds.size())
@@ -456,6 +456,25 @@ bool Alpamayo1ActionRunner::parseModelConfig(std::string const& configPath)
             mConfig.mropeSectionW);
         return false;
     }
+
+    // Optional model-variant fields (absent for Alpamayo 1 engines exported before Alpamayo 2 support).
+    std::string const actionModelType = jsonConfig.value("action_model_type", std::string{"alpamayo1"});
+    if (actionModelType == "alpamayo1")
+    {
+        mModelType = action::ActionModelType::ALPAMAYO1;
+    }
+    else if (actionModelType == "alpamayo2")
+    {
+        mModelType = action::ActionModelType::ALPAMAYO2;
+    }
+    else
+    {
+        LOG_ERROR("Unsupported action_model_type '%s' in %s", actionModelType.c_str(), configPath.c_str());
+        return false;
+    }
+    mConfig.historyIncludesOriginPoint = jsonConfig.value("history_includes_origin_point", true);
+    mConfig.maskedTokenStart = jsonConfig.value("masked_token_start", -1);
+    mConfig.maskedTokenCount = jsonConfig.value("masked_token_count", 0);
 
     // Read max_kv_cache_capacity from builder_config section
     if (jsonConfig.contains("builder_config") && jsonConfig["builder_config"].contains("max_kv_cache_capacity"))

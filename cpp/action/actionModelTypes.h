@@ -28,6 +28,7 @@ namespace action
 enum class ActionModelType
 {
     ALPAMAYO1, //!< Alpamayo 1 trajectory prediction (flow-matching head)
+    ALPAMAYO2, //!< Alpamayo 2 Super: same action head, delta-only history encoding and reasoning token masking
     UNKNOWN    //!< Unknown or unsupported action model type
 };
 
