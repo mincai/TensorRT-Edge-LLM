@@ -4032,7 +4032,11 @@ def _save_alpamayo_visual_processor(config: dict, visual_out_dir: str,
         # runtime expects preprocessor_config.json.  Copy if needed.
         _proc_cfg = os.path.join(visual_out_dir, "processor_config.json")
         _pp_cfg = os.path.join(visual_out_dir, "preprocessor_config.json")
-        if os.path.exists(_proc_cfg) and not os.path.exists(_pp_cfg):
+        if os.path.exists(_proc_cfg) and (not os.path.exists(_pp_cfg)
+                                          or _is_alpamayo2(
+                                              config.get("model_type"))):
+            # Alpamayo 2: replace the checkpoint copy made by _export_visual,
+            # whose generic pixel budget differs from the model's.
             shutil.copy2(_proc_cfg, _pp_cfg)
         logger.info("[Visual] Saved Alpamayo processor sidecar files to %s",
                     visual_out_dir)
