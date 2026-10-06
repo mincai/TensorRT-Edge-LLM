@@ -975,7 +975,9 @@ PYBIND11_MODULE(_edgellm_runtime, m)
         .def_readwrite("stop_strings", &LLMGenerationRequest::Request::stopStrings)
         .def_readwrite("logit_bias", &LLMGenerationRequest::Request::logitBias)
         .def_readwrite("guided_decoding", &LLMGenerationRequest::Request::guidedDecoding)
-        .def_readwrite("sampling_seed", &LLMGenerationRequest::Request::samplingSeed);
+        .def_readwrite("sampling_seed", &LLMGenerationRequest::Request::samplingSeed)
+        // Alpamayo: ego history as [(x, y, z), ...]; pairs with a {"type": "trajectory"} message content item.
+        .def_readwrite("past_trajectory", &LLMGenerationRequest::Request::pastTrajectory);
 
     // ========================================================================
     // Streaming
@@ -1096,7 +1098,9 @@ PYBIND11_MODULE(_edgellm_runtime, m)
         .def_readwrite("output_texts", &LLMGenerationResponse::outputTexts)
         .def_readwrite("logprobs", &LLMGenerationResponse::logprobs)
         .def_readonly("finish_reasons", &LLMGenerationResponse::finishReasons)
-        .def_readonly("prompt_token_counts", &LLMGenerationResponse::inputTokenCounts);
+        .def_readonly("prompt_token_counts", &LLMGenerationResponse::inputTokenCounts)
+        // Alpamayo: per request, the action expert's waypoints as [(accel, curvature), ...] (normalized).
+        .def_readonly("output_trajectories", &LLMGenerationResponse::outputTrajectories);
 
     // ========================================================================
     // Runtime: unified (vanilla + Eagle speculative decoding)
