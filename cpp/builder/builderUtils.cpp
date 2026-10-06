@@ -313,6 +313,16 @@ std::unique_ptr<nvinfer1::IBuilderConfig> createBuilderConfig(nvinfer1::IBuilder
 #if (NV_TENSORRT_MAJOR >= 10 && NV_TENSORRT_MINOR >= 6) || NV_TENSORRT_MAJOR >= 11
     config->setFlag(nvinfer1::BuilderFlag::kMONITOR_MEMORY);
 #endif
+    // Opt-in: keep weights in host memory during the build. A dense FP16 engine whose weights exceed about half
+    // of the GPU (e.g. a 32B VLM on a 96 GB RTX PRO 6000) otherwise fails with a Myelin OutOfMemory. The runtime
+    // pins the budget to fully resident weights at load (deserializeCudaEngineFromFile), so inference does not
+    // stream when the weights fit.
+    char const* const weightStreaming = std::getenv("EDGELLM_WEIGHT_STREAMING");
+    if (weightStreaming != nullptr && std::string(weightStreaming) == "1")
+    {
+        config->setFlag(nvinfer1::BuilderFlag::kWEIGHT_STREAMING);
+        LOG_INFO("EDGELLM_WEIGHT_STREAMING=1: building with BuilderFlag::kWEIGHT_STREAMING");
+    }
 #if IS_TRT_RTX || NV_TENSORRT_MAJOR >= 11 || (NV_TENSORRT_MAJOR == 10 && NV_TENSORRT_MINOR >= 3)
     // Only DFlash/DSpark draft engines declare a plugin I/O alias (present KV pool
     // aliases past KV pool in DFlashTargetKVCacheUpdatePlugin). Every other plugin
