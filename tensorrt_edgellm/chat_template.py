@@ -35,6 +35,10 @@ _LEGACY_RUNTIME_JSON_ARTIFACT = "processed_chat_template.json"
 
 # These checkpoints do not publish a Jinja template. Their prompt contracts
 # depend on model-specific runtime data, so they use explicit native renderers.
+# Checkpoints that ship a provider Jinja template the runtime must not use: the
+# native renderer also derives trajectory placeholders from request data.
+_MANUAL_OVERRIDES_PROVIDER = frozenset(["alpamayo2_super"])
+
 _MANUAL_BY_MODEL_TYPE = {
     "alpamayo_r1": "alpamayo",
     "alpamayo2_super": "alpamayo2",
@@ -248,6 +252,8 @@ def write_chat_template(model_dir: str, output_dir: str) -> str:
     provider_file = _file_provider_template(source)
     embedded_template = (None if provider_file is not None else
                          _embedded_provider_template(source))
+    if _get_model_type(source) in _MANUAL_OVERRIDES_PROVIDER:
+        provider_file = embedded_template = None
     raw_processor = (_raw_processor(source) if provider_file is not None
                      or embedded_template is not None else None)
 
