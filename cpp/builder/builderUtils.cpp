@@ -374,6 +374,46 @@ bool buildAndSerializeEngine(nvinfer1::IBuilder* builder, nvinfer1::INetworkDefi
         return false;
     }
 
+#if NV_TENSORRT_MAJOR >= 11 || (NV_TENSORRT_MAJOR == 10 && NV_TENSORRT_MINOR >= 13)
+    // Stream the plan straight to disk. Materializing it with buildSerializedNetwork() adds a full host copy of the
+    // weights on top of the parsed ONNX initializers, which exhausts host memory for large dense engines (a 32B FP16
+    // plan is ~64 GB) and, where the GPU shares system memory, starves the GPU as well.
+    class FileStreamWriter : public nvinfer1::IStreamWriter
+    {
+    public:
+        explicit FileStreamWriter(std::ofstream& stream)
+            : mStream(stream)
+        {
+        }
+        int64_t write(void const* data, int64_t nbBytes) noexcept override
+        {
+            mStream.write(static_cast<char const*>(data), nbBytes);
+            return mStream ? nbBytes : -1;
+        }
+
+    private:
+        std::ofstream& mStream;
+    };
+
+    std::ofstream ofs(engineFilePath, std::ios::out | std::ios::binary);
+    if (!ofs)
+    {
+        LOG_ERROR("Failed to open file for writing: %s", engineFilePath.c_str());
+        return false;
+    }
+    FileStreamWriter writer(ofs);
+    if (!builder->buildSerializedNetworkToStream(*network, *config, writer))
+    {
+        LOG_ERROR("Failed to build serialized engine");
+        return false;
+    }
+    ofs.close();
+    if (!ofs)
+    {
+        LOG_ERROR("Failed to write engine to file: %s", engineFilePath.c_str());
+        return false;
+    }
+#else
     // Build serialized network
     auto engine = std::unique_ptr<nvinfer1::IHostMemory>(builder->buildSerializedNetwork(*network, *config));
     if (!engine)
@@ -398,6 +438,7 @@ bool buildAndSerializeEngine(nvinfer1::IBuilder* builder, nvinfer1::INetworkDefi
         LOG_ERROR("Failed to write engine to file: %s", engineFilePath.c_str());
         return false;
     }
+#endif
 
     LOG_INFO("Engine saved to %s", engineFilePath.c_str());
     return true;
