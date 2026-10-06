@@ -880,10 +880,91 @@ bool LLMBuilder::setupLLMOptimizationProfiles(
     LOG_DEBUG("%s", printOptimizationProfile(contextProfile, "context_profile", &network).c_str());
     LOG_DEBUG("%s", printOptimizationProfile(generationProfile, "generation_profile", &network).c_str());
 
+    // Opt-in single profile: TensorRT keeps one copy of the (Myelin-fused) weights per optimization profile, which
+    // doubles engine weight memory. For a dense FP16 32B VLM that is ~126 GB and cannot fit a 96 GB GPU; one profile
+    // spanning both the prefill and decode shape ranges keeps a single copy. The runtime maps the decode profile
+    // index onto profile 0 when the engine has only one (TrtEngineExecutor).
+    char const* const singleProfile = std::getenv("EDGELLM_SINGLE_PROFILE");
+    if (singleProfile != nullptr && std::string(singleProfile) == "1")
+    {
+        char const* const optSource = std::getenv("EDGELLM_SINGLE_PROFILE_OPT");
+        bool const decodeOpt = optSource != nullptr && std::string(optSource) == "decode";
+        auto* merged = builder.createOptimizationProfile();
+        if (!mergeOptimizationProfiles(*contextProfile, *generationProfile, decodeOpt, network, *merged))
+        {
+            LOG_ERROR("Failed to merge context and generation optimization profiles");
+            return false;
+        }
+        LOG_INFO("EDGELLM_SINGLE_PROFILE=1: building one optimization profile (opt shapes from %s)",
+            decodeOpt ? "decode" : "prefill");
+        LOG_DEBUG("%s", printOptimizationProfile(merged, "merged_profile", &network).c_str());
+        config.addOptimizationProfile(merged);
+        return true;
+    }
+
     config.addOptimizationProfile(contextProfile);
     config.addOptimizationProfile(generationProfile);
 
     return true;
+}
+
+bool LLMBuilder::mergeOptimizationProfiles(nvinfer1::IOptimizationProfile const& contextProfile,
+    nvinfer1::IOptimizationProfile const& generationProfile, bool decodeOpt,
+    nvinfer1::INetworkDefinition const& network, nvinfer1::IOptimizationProfile& merged)
+{
+    using Sel = nvinfer1::OptProfileSelector;
+    for (int32_t i = 0; i < network.getNbInputs(); ++i)
+    {
+        nvinfer1::ITensor const* input = network.getInput(i);
+        char const* name = input->getName();
+        if (input->isShapeTensor())
+        {
+            LOG_ERROR("Cannot merge profiles for shape-tensor input '%s'", name);
+            return false;
+        }
+        nvinfer1::Dims const ctxMin = contextProfile.getDimensions(name, Sel::kMIN);
+        nvinfer1::Dims const genMin = generationProfile.getDimensions(name, Sel::kMIN);
+        bool const hasCtx = ctxMin.nbDims >= 0;
+        bool const hasGen = genMin.nbDims >= 0;
+        if (!hasCtx && !hasGen)
+        {
+            continue; // Static input: no profile entry needed.
+        }
+        if (hasCtx != hasGen)
+        {
+            nvinfer1::IOptimizationProfile const& only = hasCtx ? contextProfile : generationProfile;
+            if (!merged.setDimensions(name, Sel::kMIN, only.getDimensions(name, Sel::kMIN))
+                || !merged.setDimensions(name, Sel::kOPT, only.getDimensions(name, Sel::kOPT))
+                || !merged.setDimensions(name, Sel::kMAX, only.getDimensions(name, Sel::kMAX)))
+            {
+                LOG_ERROR("Failed to copy profile for input '%s'", name);
+                return false;
+            }
+            continue;
+        }
+        nvinfer1::Dims minDims = ctxMin;
+        nvinfer1::Dims maxDims = contextProfile.getDimensions(name, Sel::kMAX);
+        nvinfer1::Dims const genMax = generationProfile.getDimensions(name, Sel::kMAX);
+        if (genMin.nbDims != minDims.nbDims || genMax.nbDims != maxDims.nbDims)
+        {
+            LOG_ERROR("Profile rank mismatch for input '%s'", name);
+            return false;
+        }
+        for (int32_t d = 0; d < minDims.nbDims; ++d)
+        {
+            minDims.d[d] = std::min(minDims.d[d], genMin.d[d]);
+            maxDims.d[d] = std::max(maxDims.d[d], genMax.d[d]);
+        }
+        nvinfer1::Dims optDims = decodeOpt ? generationProfile.getDimensions(name, Sel::kOPT)
+                                           : contextProfile.getDimensions(name, Sel::kOPT);
+        if (!merged.setDimensions(name, Sel::kMIN, minDims) || !merged.setDimensions(name, Sel::kOPT, optDims)
+            || !merged.setDimensions(name, Sel::kMAX, maxDims))
+        {
+            LOG_ERROR("Failed to set merged profile for input '%s'", name);
+            return false;
+        }
+    }
+    return merged.isValid();
 }
 
 bool LLMBuilder::setupCommonProfiles(nvinfer1::IOptimizationProfile& contextProfile,
