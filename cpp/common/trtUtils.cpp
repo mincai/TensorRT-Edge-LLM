@@ -22,8 +22,10 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <optional>
@@ -31,6 +33,7 @@
 #include <string>
 #include <string_view>
 #include <sys/stat.h>
+#include <thread>
 #include <unistd.h>
 #include <utility>
 
@@ -163,6 +166,16 @@ public:
         , mDeviceTransferBuffers{
               PinnedHostBuffer{kEngineDeviceTransferChunkSize}, PinnedHostBuffer{kEngineDeviceTransferChunkSize}}
     {
+        // Opt-in pacing of the host-to-device engine upload: after every EDGELLM_PACED_LOAD_MB megabytes, drain the
+        // stream and sleep EDGELLM_PACED_LOAD_PAUSE_MS. On a dGPU behind a marginal PCIe switch segment, one
+        // uninterrupted multi-GB DMA burst can trip a Completion Timeout (Xid 79); short pauses avoid it.
+        char const* const paceMb = std::getenv("EDGELLM_PACED_LOAD_MB");
+        if (paceMb != nullptr && std::atoll(paceMb) > 0)
+        {
+            mPaceBytes = std::atoll(paceMb) * 1024LL * 1024LL;
+            char const* const pauseMs = std::getenv("EDGELLM_PACED_LOAD_PAUSE_MS");
+            mPauseMs = pauseMs != nullptr ? std::atoi(pauseMs) : 30;
+        }
         mFd = open(mPath.c_str(), O_RDONLY);
         if (mFd < 0)
         {
@@ -296,6 +309,17 @@ private:
 
             totalRead += hostRead;
             bufferIndex = (bufferIndex + 1U) % mDeviceTransferBuffers.size();
+
+            mBytesSincePause += hostRead;
+            if (mPaceBytes > 0 && mBytesSincePause >= mPaceBytes)
+            {
+                if (cudaStreamSynchronize(stream) != cudaSuccess)
+                {
+                    return -1;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(mPauseMs));
+                mBytesSincePause = 0;
+            }
         }
         return totalRead;
     }
@@ -305,6 +329,9 @@ private:
     int64_t mSize{0};
     int64_t mOffset{0};
     std::array<PinnedHostBuffer, kEngineDeviceTransferBufferCount> mDeviceTransferBuffers;
+    int64_t mPaceBytes{0};       //!< EDGELLM_PACED_LOAD_MB in bytes; 0 disables pacing
+    int32_t mPauseMs{0};         //!< EDGELLM_PACED_LOAD_PAUSE_MS
+    int64_t mBytesSincePause{0}; //!< Device bytes uploaded since the last pause
 };
 
 #endif // IStreamReaderV2
