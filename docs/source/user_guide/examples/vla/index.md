@@ -7,6 +7,7 @@ runtime:
 | Model | Input | Output | Executable |
 |---|---|---|---|
 | [Alpamayo-R1](alpamayo.md) | camera frames, instruction, past trajectory | future acceleration/curvature trajectory | `action_inference` |
+| [Alpamayo 2 Super](alpamayo2.md) | camera frames, instruction, past trajectory | reasoning and future acceleration/curvature trajectory | `action_inference` |
 | [Cosmos3-Edge policy](cosmos3.md) | observation image or frame list, instruction | robot action chunk | `cosmos3_policy_inference` |
 | [pi0.5](pi05.md) | camera views, instruction | robot action chunk | `pi05_policy_inference` |
 
@@ -18,6 +19,7 @@ end-to-end runtime executable.
 :hidden:
 
 alpamayo.md
+alpamayo2.md
 cosmos3.md
 pi05.md
 ```
