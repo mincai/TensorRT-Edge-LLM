@@ -31,6 +31,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace trt_edgellm
@@ -50,6 +51,11 @@ struct ActionConfig
     int32_t maxKVCacheCapacity{0}; //!< Maximum KV cache sequence capacity (from builder_config.max_kv_cache_capacity)
     int32_t numKVHeads{0};         //!< Number of key-value heads (from num_key_value_heads)
     int32_t headDim{0};            //!< Head dimension (from head_dim)
+    //! Encode the first history point as-is (Alpamayo 1) or only the deltas (Alpamayo 2)
+    //! (from history_includes_origin_point, default true)
+    bool historyIncludesOriginPoint{true};
+    int32_t maskedTokenStart{-1}; //!< First token ID masked while the VLM reasons (from masked_token_start)
+    int32_t maskedTokenCount{0};  //!< Number of masked token IDs (from masked_token_count)
 };
 
 //! \brief Standalone action / diffusion head for Alpamayo 1 trajectory prediction.
@@ -101,6 +107,14 @@ public:
     int32_t getMaxKVCacheCapacity() const noexcept
     {
         return mConfig.maxKVCacheCapacity;
+    }
+
+    //! \brief Token-ID range [start, start + count) the VLM must not sample while reasoning (count 0 = none).
+    //! Alpamayo 2 masks its discrete trajectory vocabulary so that CoT generation can only end the
+    //! reasoning block with <|traj_future_start|>.
+    std::pair<int32_t, int32_t> getMaskedTokenRange() const noexcept
+    {
+        return {mConfig.maskedTokenStart, mConfig.maskedTokenCount};
     }
 
     //! \brief Run one batched diffusion/flow-matching loop and return future trajectory waypoints for all batch items.

@@ -29,8 +29,10 @@ namespace action_utils
 {
 
 //! Encode past trajectory points (x,y,z) to binned trajectory token IDs for Alpamayo-style input.
+//! \param includeOriginPoint Alpamayo 1 encodes the first point as-is followed by N-1 deltas (3N tokens);
+//!        Alpamayo 2 encodes only the N-1 deltas of a history ending at the ego origin (3(N-1) tokens).
 std::vector<tokenizer::Rank> trajectoryToTokenIds(std::vector<PastTrajectoryPoint> const& trajectoryHistory,
-    tokenizer::Rank numTrajTokens, tokenizer::Rank trajTokenStart);
+    tokenizer::Rank numTrajTokens, tokenizer::Rank trajTokenStart, bool includeOriginPoint = true);
 
 } // namespace action_utils
 } // namespace rt

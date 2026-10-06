@@ -42,11 +42,16 @@ constexpr int kReasonableMaxBatchSize = 16;
 // Validation limits for message parsing.
 constexpr size_t kMaxMessageContentSizeBytes = 128 * 1024; // 128KB per content item
 constexpr size_t kMaxMessagesPerRequest = 64;
-constexpr size_t kMaxContentItemsPerMessage = 18;
+// Alpamayo 2 driving prompts carry 6 cameras x 4 frames, each image preceded by a camera/frame label, plus the
+// trajectory history and the instruction (~50 items).
+constexpr size_t kMaxContentItemsPerMessage = 64;
 // Match vLLM's MAX_NUM_LOGIT_BIAS_TOKENS sparse logit-bias guardrail.
 constexpr size_t kMaxLogitBiasTokens = 1024;
 constexpr float kMinLogitBias = -100.0F;
 constexpr float kMaxLogitBias = 100.0F;
+// Per-slot logit-bias capacity for runtime-generated masks (e.g. the Alpamayo 2 reasoning-time trajectory vocabulary
+// mask, ~4K entries) on top of the user-provided kMaxLogitBiasTokens entries.
+constexpr size_t kMaxInternalLogitBiasTokens = 8192;
 // Guided-decoding guide string (JSON schema / regex / EBNF / structural tag).
 // Grammar compilation is superlinear in guide size and runs synchronously on the
 // host before any GPU work, so an unbounded guide is a denial-of-service vector.

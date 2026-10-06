@@ -670,6 +670,12 @@ private:
     //! Validate request shape/runtime compatibility.
     bool validateRequestConfig(LLMGenerationRequest const& request);
 
+    //! Alpamayo 2: while the VLM writes its reasoning, mask the discrete trajectory vocabulary and the text EOS ids
+    //! for every slot that carries a trajectory history, so the block can only end on <|traj_future_start|>.
+    //! Mirrors MaskDiscreteTrajectoryLogitsProcessor + the EOS mask in Alpamayo2Super.sample_trajectories_from_data.
+    //! Must run after prepareLogitBias(); no-op for other models.
+    void applyActionReasoningMask(LLMGenerationRequest const& request, DecodingInferenceContext& context);
+
     //! Prepare per-request runtime state for models built with multimodal support.
     //! Runs multimodal preprocessing when audio or vision inputs are present.
     //! For text-only requests on MRope-based multimodal models, restores text-only RoPE state
